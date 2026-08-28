@@ -326,22 +326,28 @@ if response and response.Success then
             local gameData = HttpService:JSONDecode(responseGamelist.Body)
             local scriptLoaded = false
 
-            for gameName, _ in pairs(gameData) do
+           for gameName, expectedPlaceId in pairs(gameData) do
                 if string.find(string.lower(tostring(decoded.data.productName)), string.lower(tostring(gameName))) then
-                    scriptLoaded = true
 
-                    -- Load Target Game Script
-                    local gameScript = "https://" .. gHost .. "/SherkMasterHacka/VyseHub/refs/heads/main/" .. gameName .. ".lua"
-                    
-                    local loadSuccess, loadError = pcall(function()
-                        loadstring(game:HttpGet(gameScript))()
-                    end)
+                    if tonumber(expectedPlaceId) == 0 or tonumber(expectedPlaceId) == tonumber(currentPlaceId) then
+                        scriptLoaded = true
 
-                    if not loadSuccess then
-                        warn("[VyseHub] Script load failure: " .. tostring(loadError))
+                        local formattedGameName = string.gsub(gameName, " ", "%%20")
+                        local gameScript = "https://" .. gHost .. "/SherkMasterHacka/VyseHub/refs/heads/main/" .. formattedGameName .. ".lua"
+                        
+                        local loadSuccess, loadError = pcall(function()
+                            loadstring(game:HttpGet(gameScript))()
+                        end)
+
+                        if not loadSuccess then
+                            warn("[VyseHub] Script load failure: " .. tostring(loadError))
+                        end
+
+                        break 
+                    else
+                        Players.LocalPlayer:Kick("[VyseHub] Place ID mismatch. This script cannot be executed here.")
+                        return
                     end
-
-                    break
                 end
             end
 
@@ -359,6 +365,3 @@ else
 end
 
 if getgenv().SetInternalRequest then getgenv().SetInternalRequest(false) end
-
--- Collect Garbage to clear sensitive heap memory
-collectgarbage("collect")
