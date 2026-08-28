@@ -1,7 +1,3 @@
--- ==============================================================================
--- VYSE HUB — SECURE CLIENT WHITELIST & SCRIPT DISPATCHER
--- Fast. Safe. Lifetime.
--- ==============================================================================
 
 LPH_NO_UPVALUES = function(...) return ... end
 LPH_NO_VIRTUALIZE = function(...) return ... end
@@ -252,17 +248,17 @@ local gameInfoSuccess, gameInfo = pcall(function()
 end)
 local currentGameTitle = (gameInfoSuccess and gameInfo and gameInfo.Name) or "Roblox Game"
 -- API Endpoints
-local vHost = "vysehub.net"
-local verifyUrl = "https://www." .. vHost .. "/api/roblox/verify-key"
+local vHost = "www.vysehub.net"   -- ใส่ host จริงตรงนี้ที่เดียว มี www หรือไม่มีก็ตามจริง
+local verifyUrl = "https://" .. vHost .. "/api/roblox/verify-key"
 local gHost = "raw.githubusercontent.com"
-local gamelistUrl = "https://www." .. gHost .. "/SherkMasterHacka/VyseHub/refs/heads/main/GameList.json"
+local gamelistUrl = "https://" .. gHost .. "/SherkMasterHacka/VyseHub/refs/heads/main/GameList.json"
 
 local timestamp = os.time()
 local verification_hash = tostring(hwid):reverse() .. tostring(timestamp)
 
 local headers = {
     ["Content-Type"] = "application/json",
-    ["Origin"] = "https://www." .. vHost .. "/",
+    ["Origin"] = "https://" .. vHost,
     ["X-Verify"] = verification_hash:sub(1, 16)
 }
 
