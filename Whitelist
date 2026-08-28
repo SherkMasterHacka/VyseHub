@@ -1,3 +1,7 @@
+-- ==============================================================================
+-- VYSE HUB — SECURE CLIENT WHITELIST & SCRIPT DISPATCHER
+-- Fast. Safe. Lifetime.
+-- ==============================================================================
 
 LPH_NO_UPVALUES = function(...) return ... end
 LPH_NO_VIRTUALIZE = function(...) return ... end
@@ -133,37 +137,20 @@ LPH_NO_VIRTUALIZE(function()
         end)
     end
 
-    -- ── 6. CONSOLE SENSITIVE DATA FILTER ──
-    local function filterConsole(origFunc)
-        return function(...)
-            local args = {...}
-            local str = string.lower(table.concat(args, " "))
-            if string.find(str, "vyse") or string.find(str, "github") or string.find(str, "whitelist") then
-                return
-            end
-            return origFunc(...)
-        end
-    end
 
-    if hookfunction then
-        pcall(function()
-            hookfunction(print, filterConsole(print))
-            hookfunction(warn, filterConsole(warn))
-        end)
-    end
-
-    -- ── 7. UI DUMP BLOCKER ──
     pcall(function()
         game.DescendantAdded:Connect(function(c)
             if c and (c:IsA('TextLabel') or c:IsA('TextButton') or c:IsA('Message')) then
-                if string.find(string.lower(c.Text), 'https://') and string.find(string.lower(c.Text), 'vyse') then
+                local text = string.lower(tostring(c.Text))
+                if string.find(text, 'https://', 1, true) and string.find(text, 'vyse', 1, true) then
                     c:Destroy()
                 end
             end
         end)
 
         game.CoreGui.ChildAdded:Connect(function(c)
-            if string.lower(c.Name) == 'devconsolemaster' or string.find(string.lower(c.Name), "dex") then
+            local name = string.lower(c.Name)
+            if name == 'devconsolemaster' or string.find(name, "dex", 1, true) then
                 task.wait(0.1)
                 c:Destroy()
             end
@@ -171,9 +158,8 @@ LPH_NO_VIRTUALIZE(function()
     end)
 
     local function validateEnvironment()
-        local required_globals = {"game", "workspace", "script", "task"}
-        for _, global_name in pairs(required_globals) do
-            if not getgenv()[global_name] then return false, "Missing global: " .. global_name end
+        if not game or not workspace or not task then
+            return false, "Missing Roblox globals"
         end
         if not game.PlaceId or game.PlaceId == 0 then return false, "Invalid place environment" end
         return true, "OK"
@@ -205,15 +191,18 @@ LPH_NO_VIRTUALIZE(function()
 
     local oldReq
     local reqFunc = syn and syn.request or http_request or request or (http and http.request)
-    if hookfunction and reqFunc then
-        oldReq = hookfunction(reqFunc, newcclosure(function(newreq)
-            if newreq.Url:find("webhook") then
-                if not isInternalRequest then
-                    return {Success = false, StatusCode = 403, Body = "Access Denied"}
+    -- ห่อ pcall ไว้ เพราะ executor ที่ไม่มี newcclosure จะ error ทั้งบล็อกแล้วสคริปต์ตายเงียบ
+    if hookfunction and newcclosure and reqFunc then
+        pcall(function()
+            oldReq = hookfunction(reqFunc, newcclosure(function(newreq)
+                if newreq.Url and string.find(newreq.Url, "webhook", 1, true) then
+                    if not isInternalRequest then
+                        return {Success = false, StatusCode = 403, Body = "Access Denied"}
+                    end
                 end
-            end
-            return oldReq(newreq)
-        end))
+                return oldReq(newreq)
+            end))
+        end)
     end
 
     getgenv().SetInternalRequest = function(state) isInternalRequest = state end
@@ -247,11 +236,16 @@ local gameInfoSuccess, gameInfo = pcall(function()
     return MarketplaceService:GetProductInfo(currentPlaceId)
 end)
 local currentGameTitle = (gameInfoSuccess and gameInfo and gameInfo.Name) or "Roblox Game"
--- API Endpoints
-local vHost = "www.vysehub.net"   -- ใส่ host จริงตรงนี้ที่เดียว มี www หรือไม่มีก็ตามจริง
+
+-- ── API Endpoints ──
+-- host ทั้งชื่อรวม www หรือไม่มี ใส่ตรงนี้ที่เดียว แล้วต่อ URL แบบไม่เติมอะไรอีก
+-- ของเดิมเขียน "https://www." .. gHost ทำให้ได้ www.raw.githubusercontent.com
+-- ซึ่งใบรับรองไม่ครอบ → SEC_E_WRONG_PRINCIPAL
+local vHost = "www.vysehub.net"
 local verifyUrl = "https://" .. vHost .. "/api/roblox/verify-key"
 local gHost = "raw.githubusercontent.com"
-local gamelistUrl = "https://" .. gHost .. "/SherkMasterHacka/VyseHub/refs/heads/main/GameList.json"
+local gameListBase = "https://" .. gHost .. "/SherkMasterHacka/VyseHub/refs/heads/main/"
+local gamelistUrl = gameListBase .. "GameList.json"
 
 local timestamp = os.time()
 local verification_hash = tostring(hwid):reverse() .. tostring(timestamp)
@@ -290,74 +284,122 @@ end
 if getgenv().SetInternalRequest then getgenv().SetInternalRequest(true) end
 
 -- ── 1. SEND KEY TO SERVER FOR VERIFICATION ──
-local response = requestFunction({
-    Url = verifyUrl,
-    Method = "POST",
-    Headers = headers,
-    Body = HttpService:JSONEncode(body)
-})
+local reqOk, response = pcall(function()
+    return requestFunction({
+        Url = verifyUrl,
+        Method = "POST",
+        Headers = headers,
+        Body = HttpService:JSONEncode(body)
+    })
+end)
 
-if response and response.Success then
-    local decoded = HttpService:JSONDecode(response.Body)
-
-    -- Check Blacklist Status
-    if decoded.blacklist == true then
-        Players.LocalPlayer:Kick("[VyseHub] Your HWID is permanently blacklisted.")
-        return
-    end
-
-    -- 🔴 Check HWID Mismatch Explicitly
-    if decoded.hwidMismatch == true or string.find(string.lower(decoded.message or ""), "hwid mismatch") then
-        Players.LocalPlayer:Kick("[VyseHub] HWID Mismatch! This key is bound to another device.\nPlease reset your HWID at vysehub.net")
-        return
-    end
-
-    -- Check Verification Status
-    if decoded.success == true then
-        
-        -- ── 2. FETCH GAMELIST DISPATCHER ──
-        local responseGamelist = requestFunction({ Url = gamelistUrl })
-
-        if responseGamelist and responseGamelist.Success then
-            local gameData = HttpService:JSONDecode(responseGamelist.Body)
-            local scriptLoaded = false
-
-           for gameName, expectedPlaceId in pairs(gameData) do
-                if string.find(string.lower(tostring(decoded.data.productName)), string.lower(tostring(gameName))) then
-
-                    if tonumber(expectedPlaceId) == 0 or tonumber(expectedPlaceId) == tonumber(currentPlaceId) then
-                        scriptLoaded = true
-
-                        local formattedGameName = string.gsub(gameName, " ", "%%20")
-                        local gameScript = "https://" .. gHost .. "/SherkMasterHacka/VyseHub/refs/heads/main/" .. formattedGameName .. ".lua"
-                        
-                        local loadSuccess, loadError = pcall(function()
-                            loadstring(game:HttpGet(gameScript))()
-                        end)
-
-                        if not loadSuccess then
-                            warn("[VyseHub] Script load failure: " .. tostring(loadError))
-                        end
-
-                        break 
-                    else
-                        Players.LocalPlayer:Kick("[VyseHub] Place ID mismatch. This script cannot be executed here.")
-                        return
-                    end
-                end
-            end
-
-            if not scriptLoaded then
-                Players.LocalPlayer:Kick("[VyseHub] You do not own a license for this game.")
-            end
-        else
-            Players.LocalPlayer:Kick("[VyseHub] Failed to fetch game database. Please try again.")
-        end
-    else
-        Players.LocalPlayer:Kick("[VyseHub] " .. (decoded.message or "Invalid or expired license key."))
-    end
-else
+if not reqOk or not response or not response.Success then
+    warn("[VyseHub] verify request failed:", tostring(response and response.StatusCode or response))
     Players.LocalPlayer:Kick("[VyseHub] Unable to reach verification servers. Please check your connection.")
+    return
+end
+
+local decodeOk, decoded = pcall(function()
+    return HttpService:JSONDecode(response.Body)
+end)
+
+if not decodeOk or type(decoded) ~= "table" then
+    warn("[VyseHub] verify response was not JSON:", tostring(response.Body))
+    Players.LocalPlayer:Kick("[VyseHub] Verification server returned an unreadable response.")
+    return
+end
+
+-- Check Blacklist Status
+if decoded.blacklist == true then
+    Players.LocalPlayer:Kick("[VyseHub] Your HWID is permanently blacklisted.")
+    return
+end
+
+-- Check HWID Mismatch Explicitly
+if decoded.hwidMismatch == true
+    or string.find(string.lower(tostring(decoded.message or "")), "hwid mismatch", 1, true) then
+    Players.LocalPlayer:Kick("[VyseHub] HWID Mismatch! This key is bound to another device.\nPlease reset your HWID at vysehub.net")
+    return
+end
+
+if decoded.success ~= true then
+    Players.LocalPlayer:Kick("[VyseHub] " .. tostring(decoded.message or "Invalid or expired license key."))
+    return
+end
+
+-- ── 2. FETCH GAMELIST DISPATCHER ──
+local listOk, responseGamelist = pcall(function()
+    return requestFunction({ Url = gamelistUrl, Method = "GET" })
+end)
+
+if not listOk or not responseGamelist or not responseGamelist.Success then
+    warn("[VyseHub] gamelist request failed:",
+        tostring(responseGamelist and responseGamelist.StatusCode or responseGamelist))
+    Players.LocalPlayer:Kick("[VyseHub] Failed to fetch game database. Please try again.")
+    return
+end
+
+local listDecodeOk, gameData = pcall(function()
+    return HttpService:JSONDecode(responseGamelist.Body)
+end)
+
+if not listDecodeOk or type(gameData) ~= "table" then
+    -- สาเหตุที่พบบ่อยคือ GameList.json มี comma เกินท้ายรายการสุดท้าย
+    warn("[VyseHub] GameList.json is not valid JSON. Body:", tostring(responseGamelist.Body))
+    Players.LocalPlayer:Kick("[VyseHub] Game database is malformed. Please contact support.")
+    return
+end
+
+local function namesMatch(a, b)
+    a = string.lower(tostring(a or ""))
+    b = string.lower(tostring(b or ""))
+    if a == "" or b == "" then return false end
+    if a == b then return true end
+    return string.find(a, b, 1, true) ~= nil or string.find(b, a, 1, true) ~= nil
+end
+
+local licenseName = decoded.data and decoded.data.productName or ""
+if licenseName == "" then
+    warn("[VyseHub] verify response missing data.productName")
+    Players.LocalPlayer:Kick("[VyseHub] License data incomplete. Please contact support.")
+    return
+end
+
+local scriptLoaded = false
+local matchedButWrongPlace = false
+
+for gameName, expectedPlaceId in pairs(gameData) do
+    if namesMatch(licenseName, gameName) then
+        local expected = tonumber(expectedPlaceId)
+
+        if expected == 0 or expected == tonumber(currentPlaceId) then
+            scriptLoaded = true
+
+            local formattedGameName = string.gsub(gameName, " ", "%%20")
+            local gameScript = gameListBase .. formattedGameName .. ".lua"
+
+            local loadSuccess, loadError = pcall(function()
+                loadstring(game:HttpGet(gameScript))()
+            end)
+
+            if not loadSuccess then
+                warn("[VyseHub] Script load failure for " .. gameName .. ": " .. tostring(loadError))
+            end
+
+            break
+        else
+            matchedButWrongPlace = true
+        end
+    end
+end
+
+if not scriptLoaded then
+    if matchedButWrongPlace then
+        Players.LocalPlayer:Kick("[VyseHub] Place ID mismatch. This script cannot be executed here.")
+    else
+        warn("[VyseHub] no GameList entry matched license '" .. tostring(licenseName) .. "'")
+        Players.LocalPlayer:Kick("[VyseHub] You do not own a license for this game.")
+    end
 end
 
 if getgenv().SetInternalRequest then getgenv().SetInternalRequest(false) end
