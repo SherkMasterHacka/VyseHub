@@ -70,6 +70,7 @@ LPH_NO_VIRTUALIZE(function()
         return decoys
     end
 
+
     local function createIntegrityCheck()
         local checksums = {}
         local critical_functions = {}
@@ -127,25 +128,6 @@ LPH_NO_VIRTUALIZE(function()
         end)
     end
 
-    local function filterConsole(origFunc)
-        return function(...)
-            local args = {...}
-            local str = string.lower(table.concat(args, " "))
-            if string.find(str, "vyse", 1, true)
-                or string.find(str, "github", 1, true)
-                or string.find(str, "whitelist", 1, true) then
-                return
-            end
-            return origFunc(...)
-        end
-    end
-
-    if hookfunction then
-        pcall(function()
-            hookfunction(print, filterConsole(print))
-            hookfunction(warn, filterConsole(warn))
-        end)
-    end
 
     pcall(function()
         game.DescendantAdded:Connect(function(c)
@@ -251,6 +233,7 @@ if not userKey or userKey == "" then
     Players.LocalPlayer:Kick("[VyseHub] Missing license key. Please set _G.Key before running.")
     return
 end
+
 _G.Key = nil
 if getgenv then getgenv().Key = nil end
 
@@ -270,7 +253,6 @@ if not requestFunction then
 end
 
 if getgenv().SetInternalRequest then getgenv().SetInternalRequest(true) end
-
 
 local reqOk, res = pcall(function()
     return requestFunction({
@@ -301,6 +283,7 @@ if not res.Success or res.StatusCode ~= 200 then
     return
 end
 
+
 local looksJson = string.sub((res.Body or ""):gsub("^%s+", ""), 1, 1) == "{"
 if looksJson then
     local okJson, info = pcall(function() return HttpService:JSONDecode(res.Body) end)
@@ -309,8 +292,16 @@ if looksJson then
         return
     end
 end
-local runToken = res.Headers
-    and (res.Headers["X-Run-Token"] or res.Headers["x-run-token"])
+
+local runToken = string.match(res.Body or "", "^%-%-%[%[VH:(%x+)%]%]")
+
+if not runToken and res.Headers then
+    runToken = res.Headers["X-Run-Token"] or res.Headers["x-run-token"]
+end
+
+if not runToken then
+    warn("[VyseHub] ไม่พบ run token ทั้งใน body และ header — อัปเดตเซิร์ฟเวอร์แล้วหรือยัง")
+end
 
 if runToken and getgenv then
     getgenv().__vyse_run = runToken
@@ -319,7 +310,7 @@ end
 local execOk, execErr = pcall(function()
     local AvatarChatService = game:GetService("AvatarChatService")
     AvatarChatService:SetAttribute("Enabled", "20528f76d26c68c9d75adf342010d7c4")
-    
+
     loadstring(res.Body)()
 end)
 
