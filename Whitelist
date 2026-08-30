@@ -1,0 +1,429 @@
+LPH_NO_UPVALUES = function(...) return ... end
+LPH_NO_VIRTUALIZE = function(...) return ... end
+
+local VH = {}
+
+VH.env = (getgenv and getgenv()) or _G or {}
+VH.debug = (VH.env.VyseDebug == true) or (_G and _G.VyseDebug == true)
+VH.rawPrint = print
+VH.rawWarn = warn
+VH.bypass = false
+VH.request = nil
+VH.requestName = nil
+VH.stages = {}
+VH.secrets = { "vysehub.net", "raw.githubusercontent" }
+VH.sessionId = nil
+VH.key = nil
+VH.hwid = nil
+VH.gate = "20528f76d26c68c9d75adf342010d7c4"
+
+function VH.out(msg)
+    VH.bypass = true
+    pcall(VH.rawWarn, msg)
+    VH.bypass = false
+end
+
+function VH.stage(code, msg)
+    VH.stages[#VH.stages + 1] = code
+    if VH.debug then
+        VH.out("[VH " .. code .. "] " .. tostring(msg))
+    end
+end
+
+function VH.trail()
+    return table.concat(VH.stages, ">")
+end
+
+function VH.kick(msg)
+    VH.out(msg .. " | trail " .. VH.trail())
+    local plr
+    pcall(function() plr = game:GetService("Players").LocalPlayer end)
+    for _ = 1, 20 do
+        if plr then break end
+        pcall(function() task.wait(0.1) end)
+        pcall(function() plr = game:GetService("Players").LocalPlayer end)
+    end
+    if plr then pcall(function() plr:Kick(msg) end) end
+end
+
+function VH.pick()
+    local e = VH.env
+    local list = {
+        { "request", e.request },
+        { "http_request", e.http_request },
+        { "request", request },
+        { "http_request", http_request },
+        { "httprequest", e.httprequest },
+        { "syn.request", syn and syn.request },
+        { "http.request", http and http.request },
+        { "fluxus.request", fluxus and fluxus.request },
+        { "krnl.request", krnl and krnl.request },
+        { "Drawing.request", nil },
+    }
+    for i = 1, #list do
+        if type(list[i][2]) == "function" then
+            return list[i][2], list[i][1]
+        end
+    end
+    return nil, nil
+end
+
+function VH.caps()
+    local e = VH.env
+    local names = { "request", "http_request", "httprequest", "hookfunction",
+        "newcclosure", "loadstring", "getgenv", "setreadonly", "getgc", "restorefunction" }
+    local out = {}
+    for i = 1, #names do
+        local n = names[i]
+        local v = e[n]
+        if v == nil then v = _G[n] end
+        out[#out + 1] = n .. "=" .. (type(v) == "function" and "1" or "0")
+    end
+    out[#out + 1] = "syn=" .. (syn and "1" or "0")
+    local exec = "?"
+    if type(identifyexecutor) == "function" then
+        local okExec, nameExec = pcall(identifyexecutor)
+        if okExec and nameExec then exec = tostring(nameExec) end
+    end
+    out[#out + 1] = "executor=" .. exec
+    return table.concat(out, " ")
+end
+
+LPH_NO_VIRTUALIZE(function()
+
+    local picked, pickedName = VH.pick()
+    VH.request = picked
+    VH.requestName = pickedName
+    VH.stage("A", "request=" .. tostring(pickedName))
+
+    if not VH.debug then
+        local realPrint, realWarn = print, warn
+        local function wrap(original)
+            return function(...)
+                if VH.bypass then return original(...) end
+                local n = select("#", ...)
+                local args = table.pack(...)
+                local ok, hit = pcall(function()
+                    local parts = {}
+                    for i = 1, n do parts[i] = string.lower(tostring(args[i])) end
+                    local text = table.concat(parts, " ")
+                    for i = 1, #VH.secrets do
+                        if string.find(text, string.lower(VH.secrets[i]), 1, true) then
+                            return true
+                        end
+                    end
+                    return false
+                end)
+                if ok and hit then return end
+                return original(...)
+            end
+        end
+        pcall(function()
+            VH.env.print = wrap(realPrint)
+            VH.env.warn = wrap(realWarn)
+        end)
+        VH.stage("B", "console filter installed")
+    else
+        VH.stage("B", "console filter skipped")
+    end
+
+    if type(setreadonly) == "function" and type(getrawmetatable) == "function" then
+        pcall(function() setreadonly(getrawmetatable(game), false) end)
+    end
+
+    pcall(function()
+        game.DescendantAdded:Connect(function(c)
+            if c and (c:IsA("TextLabel") or c:IsA("TextButton") or c:IsA("Message")) then
+                local text = string.lower(tostring(c.Text))
+                if string.find(text, "https://", 1, true) and string.find(text, "vyse", 1, true) then
+                    c:Destroy()
+                end
+            end
+        end)
+    end)
+
+    pcall(function()
+        game:GetService("CoreGui").ChildAdded:Connect(function(c)
+            local name = string.lower(c.Name)
+            if name == "devconsolemaster" or string.find(name, "dex", 1, true) then
+                task.wait(0.1)
+                c:Destroy()
+            end
+        end)
+    end)
+
+    VH.stage("C", "prelude done")
+end)()
+
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+
+local hwid = ""
+pcall(function() hwid = game:GetService("RbxAnalyticsService"):GetClientId() end)
+if hwid == "" or hwid == nil then
+    pcall(function() hwid = tostring(game:GetService("Players").LocalPlayer.UserId) end)
+end
+
+VH.stage("E1", "hwid=" .. tostring(hwid))
+
+if type(loadstring) ~= "function" then
+    VH.out("[VyseHub] caps " .. VH.caps())
+    VH.kick("[VyseHub] Unsupported executor: loadstring missing. (E-100)")
+    return
+end
+
+if type(VH.request) ~= "function" then
+    VH.request, VH.requestName = VH.pick()
+end
+
+if type(VH.request) ~= "function" then
+    VH.out("[VyseHub] caps " .. VH.caps())
+    VH.kick("[VyseHub] Unsupported executor: no HTTP request function. (E-101)")
+    return
+end
+
+local userKey = _G.Key or VH.env.Key
+if type(userKey) ~= "string" or userKey == "" then
+    VH.kick("[VyseHub] Missing license key. Set _G.Key before running. (E-106)")
+    return
+end
+userKey = (userKey:gsub("^%s+", ""):gsub("%s+$", ""))
+
+_G.Key = nil
+VH.env.Key = nil
+
+VH.key = userKey
+VH.hwid = hwid
+VH.secrets[#VH.secrets + 1] = userKey
+if hwid and hwid ~= "" then VH.secrets[#VH.secrets + 1] = tostring(hwid) end
+
+VH.stage("F", "key len=" .. #userKey)
+
+local currentPlaceId = game.PlaceId
+local currentGameTitle = "Roblox Game"
+pcall(function()
+    local info = game:GetService("MarketplaceService"):GetProductInfo(currentPlaceId)
+    if info and info.Name then currentGameTitle = info.Name end
+end)
+
+VH.stage("G", currentGameTitle .. " / " .. tostring(currentPlaceId))
+
+local timestamp = os.time()
+local verification = tostring(hwid):reverse() .. tostring(timestamp)
+
+local headers = {
+    ["Content-Type"] = "application/json",
+    ["X-Verify"] = verification:sub(1, 16),
+}
+
+local body = HttpService:JSONEncode({
+    key = userKey,
+    hwid = hwid,
+    timestamp = timestamp,
+    verification = verification,
+    placeId = tostring(currentPlaceId),
+    gameName = currentGameTitle,
+})
+
+VH.headerLines = 60
+
+function VH.blame(err, body)
+    local n
+    for digits in tostring(err):gmatch(":(%d+):") do n = tonumber(digits) end
+    if not n or type(body) ~= "string" then return nil end
+    local lines = {}
+    for line in (body .. "\n"):gmatch("([^\n]*)\n") do
+        lines[#lines + 1] = line
+    end
+    if not lines[n] then
+        return "payload:" .. n .. " (out of range, payload has " .. #lines .. " lines)"
+    end
+    local out = { "payload:" .. n .. " source:" .. (n - VH.headerLines) .. " of " .. #lines }
+    for i = math.max(1, n - 2), math.min(#lines, n + 2) do
+        out[#out + 1] = (i == n and ">> " or "   ") .. i .. ": " .. lines[i]:sub(1, 160)
+    end
+    return table.concat(out, "\n")
+end
+
+function VH.report(text, blame)
+    if type(VH.request) ~= "function" then return end
+    pcall(function()
+        VH.request({
+            Url = "https://www.vysehub.net/api/roblox/heartbeat",
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode({
+                sessionId = VH.sessionId or "unknown",
+                key = VH.key or "unknown",
+                hwid = VH.hwid or "",
+                clientError = tostring(text):sub(1, 400),
+                blame = blame and tostring(blame):sub(1, 400) or nil,
+            }),
+        })
+    end)
+end
+
+local function normalize(raw)
+    if type(raw) ~= "table" then return nil end
+    local b = raw.Body or raw.body or raw.Content or raw.content
+    if type(b) ~= "string" then b = tostring(b or "") end
+    local status = tonumber(raw.StatusCode or raw.statusCode or raw.status_code
+        or raw.Status or raw.status or raw.code) or 0
+    if status == 0 and #b > 0 then status = 200 end
+    local success = raw.Success
+    if success == nil then success = raw.success end
+    if success == nil then success = (status >= 200 and status < 300) end
+    return {
+        body = b,
+        status = status,
+        success = success and true or false,
+        headers = raw.Headers or raw.headers,
+    }
+end
+
+local res, lastErr
+for attempt = 1, 3 do
+    local ok, raw = pcall(VH.request, {
+        Url = "https://www.vysehub.net/api/roblox/script",
+        Method = "POST",
+        Headers = headers,
+        Body = body,
+    })
+    if ok then
+        res = normalize(raw)
+        if res then
+            VH.stage("H", "http " .. res.status .. " len=" .. #res.body .. " try=" .. attempt)
+            break
+        end
+        lastErr = "response was " .. type(raw)
+    else
+        lastErr = tostring(raw)
+    end
+    VH.stage("H", "attempt " .. attempt .. " failed: " .. tostring(lastErr))
+    if attempt < 3 then pcall(function() task.wait(attempt) end) end
+end
+
+if not res then
+    VH.out("[VyseHub] via " .. tostring(VH.requestName) .. " error " .. tostring(lastErr))
+    VH.out("[VyseHub] caps " .. VH.caps())
+    VH.kick("[VyseHub] Unable to reach verification servers. (E-102)")
+    return
+end
+
+if not res.success or res.status ~= 200 then
+    local okJson, info = pcall(function() return HttpService:JSONDecode(res.body) end)
+    local msg = (okJson and type(info) == "table" and info.message)
+        or ("Invalid or expired license key. (HTTP " .. tostring(res.status) .. ")")
+    VH.kick("[VyseHub] " .. tostring(msg))
+    return
+end
+
+local trimmed = (res.body or ""):gsub("^%s+", "")
+
+if string.sub(trimmed, 1, 1) == "{" then
+    local okJson, info = pcall(function() return HttpService:JSONDecode(res.body) end)
+    if okJson and type(info) == "table" and info.success == false then
+        VH.kick("[VyseHub] " .. tostring(info.message or "Access denied."))
+        return
+    end
+end
+
+if #trimmed == 0 then
+    VH.kick("[VyseHub] Server returned an empty script. (E-103)")
+    return
+end
+
+local runToken = string.match(res.body, "^%-%-%[%[VH:(%x+)%]%]")
+
+if not runToken and type(res.headers) == "table" then
+    runToken = res.headers["X-Run-Token"] or res.headers["x-run-token"] or res.headers["X-RUN-TOKEN"]
+end
+
+if type(res.headers) == "table" then
+    VH.sessionId = res.headers["X-Session-Id"] or res.headers["x-session-id"]
+end
+
+VH.stage("I", "token=" .. tostring(runToken) .. " session=" .. tostring(VH.sessionId))
+
+if runToken then
+    VH.env.__vyse_run = runToken
+    _G.__vyse_run = runToken
+end
+
+local chunk, compileErr
+do
+    local okLoad, a, b = pcall(loadstring, res.body)
+    if okLoad then
+        chunk, compileErr = a, b
+    else
+        compileErr = a
+    end
+end
+if not chunk then
+    VH.out("[VyseHub] compile " .. tostring(compileErr))
+    local blame = VH.blame(compileErr, res.body)
+    VH.out("[VyseHub] blame " .. tostring(blame))
+    VH.report("E-104 " .. tostring(compileErr), blame)
+    VH.kick("[VyseHub] Script failed to compile. (E-104)\n" .. tostring(compileErr):sub(1, 180)
+        .. (VH.debug and blame and ("\n" .. blame) or ""))
+    return
+end
+
+do
+    local realReq = VH.request
+    local function guard(req)
+        local url = req and (req.Url or req.url)
+        if url and string.find(url, "webhook", 1, true) and not VH.internal then
+            return { Success = false, StatusCode = 403, Body = "Access Denied" }
+        end
+        return realReq(req)
+    end
+    VH.internal = false
+    VH.env.SetInternalRequest = function(state) VH.internal = state and true or false end
+    pcall(function()
+        if type(VH.env.request) == "function" then VH.env.request = guard end
+        if type(VH.env.http_request) == "function" then VH.env.http_request = guard end
+        if type(rawget(_G, "request")) == "function" then _G.request = guard end
+        if type(rawget(_G, "http_request")) == "function" then _G.http_request = guard end
+        if syn and type(syn.request) == "function" then syn.request = guard end
+    end)
+    VH.stage("D", "webhook guard armed")
+end
+
+local gateSet = false
+pcall(function()
+    local svc = game:GetService("AvatarChatService")
+    svc:SetAttribute("Enabled", VH.gate)
+    gateSet = svc:GetAttribute("Enabled") == VH.gate
+end)
+
+VH.stage("G2", "gate " .. tostring(gateSet))
+
+if not gateSet then
+    VH.out("[VyseHub] gate attribute could not be written (E-107)")
+end
+
+task.spawn(function()
+    task.wait(20)
+    local left
+    pcall(function() left = game:GetService("AvatarChatService"):GetAttribute("Enabled") end)
+    if left == VH.gate then
+        VH.out("[VyseHub] gate still unconsumed after 20s, script is waiting on it (E-108)")
+    end
+end)
+
+VH.stage("J", "executing")
+
+local execOk, execErr = pcall(chunk)
+
+if not execOk then
+    VH.out("[VyseHub] runtime " .. tostring(execErr))
+    local blame = VH.blame(execErr, res.body)
+    VH.out("[VyseHub] blame " .. tostring(blame))
+    VH.report("E-105 " .. tostring(execErr), blame)
+    VH.kick("[VyseHub] Failed to start the script. (E-105)\n" .. tostring(execErr):sub(1, 180)
+        .. (VH.debug and blame and ("\n" .. blame) or ""))
+    return
+end
+
+VH.stage("K", "ok")
